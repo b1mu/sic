@@ -63,7 +63,7 @@ const ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const $=s=>document.querySelector(s), id=Math.random().toString(36).slice(2,10);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let live=false, isHost=false, pc=null, peers={}, media=null, facing='user', wl=null;
+let live=false, isHost=false, pc=null, peers={}, media=null, facing='user', wl=null, sigReady=false;
 
 const sig=sb.channel('live',{config:{broadcast:{self:false},presence:{key:id}}});
 const tx=m=>sig.send({type:'broadcast',event:'s',payload:m});
@@ -90,6 +90,7 @@ function setLive(on,title){
   if(title) $('#ttl').textContent=title;
   $('#off').style.display=on?'none':'grid';
   if(!on){$('#v').srcObject=null; if(pc){pc.close();pc=null}}
+  else if(!isHost && sigReady) join();
 }
 function join(){
   if(isHost||!live) return;
@@ -186,7 +187,13 @@ async function sendMsg(){
   sb.channel('db').on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},p=>addMsg(p.new))
     .on('postgres_changes',{event:'UPDATE',schema:'public',table:'stream'},p=>{
       if(!isHost){setLive(p.new.is_live,p.new.title)}}).subscribe();
-  await sig.subscribe(async st=>{ if(st==='SUBSCRIBED'){ await sig.track({role:'viewer'}); if(live) join(); }});
+  await sig.subscribe(async st=>{
+    if(st==='SUBSCRIBED'){
+      sigReady=true;
+      await sig.track({role:isHost?'host':'viewer'});
+      if(live && !isHost) join();
+    }
+  });
   route();
 })();
 </script></body></html>
