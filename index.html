@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>jessiah.cam</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+body{margin:0;background:#dcdcdc;font:13px Verdana,Arial,sans-serif;color:#222}
+#top{background:#222;border-bottom:3px solid #6bb800;padding:8px 14px;display:flex;align-items:center;gap:14px}
+#top b{color:#fff;font-size:22px;letter-spacing:-1px}#top b i{color:#6bb800;font-style:normal}
+#top span{color:#aaa;flex:1}
+#wrap{max-width:1000px;margin:12px auto;display:grid;grid-template-columns:1fr 300px;gap:10px;padding:0 8px}
+.box{background:#fff;border:1px solid #aaa}
+.bar{background:linear-gradient(#f4f4f4,#d8d8d8);border-bottom:1px solid #aaa;padding:6px 10px;font-weight:bold;display:flex;justify-content:space-between}
+#stage{position:relative;background:#000;aspect-ratio:4/3}
+video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+#off{position:absolute;inset:0;display:grid;place-items:center;color:#888;text-align:center;font-size:18px;pointer-events:none}
+.pill{padding:1px 7px;color:#fff;font-size:11px;border-radius:3px;background:#888}.pill.on{background:#d00}
+.info{padding:10px}.info h2{margin:0 0 4px;font-size:16px}
+#chat{display:flex;flex-direction:column;height:520px}
+#msgs{flex:1;overflow:auto;padding:6px;font-size:12px}#msgs p{margin:0 0 4px;word-wrap:break-word}#msgs b{color:#3a7d00}
+.cf{padding:6px;border-top:1px solid #aaa;display:grid;gap:4px}
+input,button{font:inherit;padding:6px;border:1px solid #888;border-radius:2px}
+button{background:linear-gradient(#8bd400,#5a9f00);color:#fff;font-weight:bold;cursor:pointer;border-color:#487f00}
+button.g{background:linear-gradient(#eee,#ccc);color:#222;border-color:#888}
+#dash{max-width:520px;margin:12px auto;padding:0 8px;display:none}
+#dash .info{display:grid;gap:8px}#dash video{aspect-ratio:3/4;max-height:60vh}
+a{color:#3a7d00;cursor:pointer}
+@media(max-width:760px){#wrap{grid-template-columns:1fr}#chat{height:380px}}
+</style></head><body>
+<div id="top"><b>jessiah<i>.cam</i></b><span>live from Jessiah's phone</span><a onclick="location.hash='golive';route()" style="color:#6bb800">broadcast</a></div>
+
+<div id="wrap">
+  <div class="box">
+    <div class="bar"><span id="ttl">Jessiah LIVE</span><span><span id="pill" class="pill">OFFLINE</span> <span id="vc"></span></span></div>
+    <div id="stage"><video id="v" autoplay muted playsinline controls></video><div id="off">Jessiah is offline.<br><small>Check back soon.</small></div></div>
+    <div class="info"><h2>Jessiah</h2><span style="color:#666">Live broadcast &middot; tap the video for sound</span></div>
+  </div>
+  <div class="box" id="chat">
+    <div class="bar">Chat</div><div id="msgs"></div>
+    <div class="cf"><input id="nick" maxlength="20" placeholder="Your nickname"><input id="m" maxlength="300" placeholder="Say something..." onkeydown="if(event.key==='Enter')sendMsg()"><button onclick="sendMsg()">Chat</button></div>
+  </div>
+</div>
+
+<div id="dash"><div class="box">
+  <div class="bar"><span>Broadcast from this phone</span><a onclick="location.hash='';route()">&larr; back to site</a></div>
+  <div class="info" id="login">
+    <input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password">
+    <button onclick="signin()">Log in</button><div id="err" style="color:#c00"></div>
+  </div>
+  <div class="info" id="ctl" style="display:none">
+    <video id="pv" autoplay muted playsinline></video>
+    <input id="ti" value="Jessiah LIVE" placeholder="Stream title">
+    <button id="go" onclick="goLive()">GO LIVE</button>
+    <button class="g" onclick="flip()">Flip camera</button>
+    <div style="color:#666"><span id="st">Not live.</span> <span id="hvc"></span></div>
+  </div>
+</div></div>
+
+<script>
+const SUPABASE_URL='https://tfexothklivophfbnafo.supabase.co';
+const SUPABASE_KEY='sb_publishable_e_RobkQE-h4DApZLBCxd1Q_dC1KMuU1';
+const ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]};
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const $=s=>document.querySelector(s), id=Math.random().toString(36).slice(2,10);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let live=false, isHost=false, pc=null, peers={}, media=null, facing='user', wl=null;
+
+const sig=sb.channel('live',{config:{broadcast:{self:false},presence:{key:id}}});
+const tx=m=>sig.send({type:'broadcast',event:'s',payload:m});
+
+/* ---------- routing ---------- */
+function route(){
+  const g=location.hash==='#golive';
+  $('#wrap').style.display=g?'none':'grid'; $('#dash').style.display=g?'block':'none';
+  if(g) dashInit();
+}
+async function dashInit(){
+  const {data}=await sb.auth.getSession();
+  $('#login').style.display=data.session?'none':'grid'; $('#ctl').style.display=data.session?'grid':'none';
+  if(data.session&&!media) startPreview();
+}
+async function signin(){
+  const {error}=await sb.auth.signInWithPassword({email:$('#em').value,password:$('#pw').value});
+  error?$('#err').textContent=error.message:dashInit();
+}
+
+/* ---------- viewer ---------- */
+function setLive(on,title){
+  live=on; $('#pill').textContent=on?'LIVE':'OFFLINE'; $('#pill').className='pill'+(on?' on':'');
+  if(title) $('#ttl').textContent=title;
+  $('#off').style.display=on?'none':'grid';
+  if(!on){$('#v').srcObject=null; if(pc){pc.close();pc=null}}
+}
+function join(){
+  if(isHost||!live) return;
+  if(pc) pc.close();
+  pc=new RTCPeerConnection(ICE);
+  pc.ontrack=e=>{$('#v').srcObject=e.streams[0];$('#v').play().catch(()=>{})};
+  pc.onicecandidate=e=>e.candidate&&tx({type:'ice',to:'host',from:id,c:e.candidate});
+  tx({type:'join',from:id});
+}
+async function onSig(m){
+  if(isHost){
+    if(m.type==='join') return makePeer(m.from);
+    if(m.to==='host'&&peers[m.from]){
+      if(m.type==='answer') await peers[m.from].setRemoteDescription(m.sdp);
+      if(m.type==='ice') await peers[m.from].addIceCandidate(m.c).catch(()=>{});
+    }
+    return;
+  }
+  if(m.type==='hostready'){setLive(true);join()}
+  if(m.type==='stop') setLive(false);
+  if(m.to===id&&pc){
+    if(m.type==='offer'){
+      await pc.setRemoteDescription(m.sdp);
+      const a=await pc.createAnswer(); await pc.setLocalDescription(a);
+      tx({type:'answer',to:'host',from:id,sdp:pc.localDescription});
+    }
+    if(m.type==='ice') await pc.addIceCandidate(m.c).catch(()=>{});
+  }
+}
+sig.on('broadcast',{event:'s'},({payload})=>onSig(payload));
+sig.on('presence',{event:'sync'},()=>{
+  const st=sig.presenceState();
+  const n=Object.keys(st).filter(k=>st[k][0]&&st[k][0].role==='viewer').length;
+  $('#vc').textContent=live?n+' watching':''; $('#hvc').textContent=n+' watching';
+});
+
+/* ---------- broadcaster ---------- */
+async function startPreview(){
+  try{
+    media=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:960}},audio:true});
+    $('#pv').srcObject=media;
+  }catch(e){$('#st').textContent='Camera blocked: '+e.message+' (page must be on https)'}
+}
+async function flip(){
+  facing=facing==='user'?'environment':'user';
+  const old=media; media=null; old&&old.getTracks().forEach(t=>t.stop());
+  await startPreview(); if(!media) return;
+  const vt=media.getVideoTracks()[0];
+  Object.values(peers).forEach(p=>p.getSenders().forEach(s=>s.track&&s.track.kind==='video'&&s.replaceTrack(vt)));
+}
+async function makePeer(vid){
+  if(!isHost||!media) return;
+  peers[vid]&&peers[vid].close();
+  const p=new RTCPeerConnection(ICE); peers[vid]=p;
+  media.getTracks().forEach(t=>p.addTrack(t,media));
+  p.onicecandidate=e=>e.candidate&&tx({type:'ice',to:vid,from:'host',c:e.candidate});
+  const o=await p.createOffer(); await p.setLocalDescription(o);
+  tx({type:'offer',to:vid,sdp:p.localDescription});
+}
+async function goLive(){
+  if(!isHost){
+    if(!media) await startPreview(); if(!media) return;
+    isHost=true; live=true;
+    const {error}=await sb.from('stream').update({is_live:true,title:$('#ti').value,updated_at:new Date().toISOString()}).eq('id',1);
+    if(error){isHost=false;live=false;$('#st').textContent='Error: '+error.message;return}
+    await sig.track({role:'host'}); tx({type:'hostready'});
+    try{wl=await navigator.wakeLock.request('screen')}catch(e){}
+    $('#go').textContent='STOP STREAM'; $('#st').textContent='You are LIVE. Keep this screen open.';
+  }else{
+    isHost=false; live=false;
+    Object.values(peers).forEach(p=>p.close()); peers={};
+    await sb.from('stream').update({is_live:false}).eq('id',1);
+    tx({type:'stop'}); wl&&wl.release();
+    await sig.track({role:'viewer'});
+    $('#go').textContent='GO LIVE'; $('#st').textContent='Not live.';
+  }
+}
+
+/* ---------- chat ---------- */
+function addMsg(m){const d=$('#msgs');d.insertAdjacentHTML('beforeend',`<p><b>${esc(m.nick)}:</b> ${esc(m.body)}</p>`);d.scrollTop=d.scrollHeight}
+async function sendMsg(){
+  const nick=$('#nick').value.trim(), body=$('#m').value.trim(); if(!nick||!body) return;
+  localStorage.setItem('nick',nick); $('#m').value='';
+  const {error}=await sb.from('messages').insert({nick,body}); if(error) alert(error.message);
+}
+
+/* ---------- boot ---------- */
+(async()=>{
+  $('#nick').value=localStorage.getItem('nick')||'';
+  const {data:s}=await sb.from('stream').select('*').eq('id',1).single();
+  if(s) setLive(s.is_live,s.title);
+  const {data:old}=await sb.from('messages').select('*').order('id',{ascending:false}).limit(50);
+  (old||[]).reverse().forEach(addMsg);
+  sb.channel('db').on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},p=>addMsg(p.new))
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'stream'},p=>{
+      if(!isHost){setLive(p.new.is_live,p.new.title)}}).subscribe();
+  await sig.subscribe(async st=>{ if(st==='SUBSCRIBED'){ await sig.track({role:'viewer'}); if(live) join(); }});
+  route();
+})();
+</script></body></html>
